@@ -1,0 +1,213 @@
+---
+title: "Rotina com Metodologia CMS para Painel"
+output: html_notebook
+---
+
+# Bibliotecas necessarias
+```{r}
+
+require(dplyr)
+require(tidyr)
+require(readr)
+require(stringr)
+
+```
+
+# Lendo os arquivos csvs com os dados do Nordeste e importação mundial
+```{r}
+
+
+exportacao_ne <- exportacao %>%
+  group_by(uf, estado, secao, nome_secao, co_pais_ison_num, destino, periodo) %>%
+  summarise(
+    valor_fob = sum(valor_fob, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+exportacao_ne <- read_delim(
+  "C:/Users/Nathan/Home/Internacional/Dados/Exportações/Dados_cms.csv",
+  delim = ";",
+  locale = locale(encoding = "UTF-8"),
+  show_col_types = FALSE
+)
+
+demanda_mundial <- read_delim(
+  "C:/Users/Nathan/Home/Internacional/Dados/Importações/baci_cms_ref.csv",
+  delim = ";",
+  locale = locale(encoding = "Latin1"),
+  show_col_types = FALSE
+)
+
+##Checar estrutura
+glimpse(exportacao_ne)
+glimpse(demanda_mundial)
+
+
+#Limpando
+exportacao_ne <- exportacao_ne %>%
+  mutate(
+    co_pais = as.character(co_pais),
+    co_pais_ison_num = as.integer(co_pais_ison_num),
+    periodo = str_trim(periodo),
+    valor_fob = as.numeric(valor_fob)
+  )
+
+demanda_mundial <- demanda_mundial %>%
+  mutate(
+    co_pais_ison_num = as.integer(co_pais_ison_num),
+    periodo = str_trim(periodo),
+    valor_fob = as.numeric(valor_fob)
+  )
+
+##Checar estrutura
+glimpse(exportacao_ne)
+glimpse(demanda_mundial)
+
+
+names(exportacao_ne)
+names(demanda_mundial)
+
+```
+
+
+# Calculo para as exportações dos estados do nordeste
+```{r}
+# X_t = exportações totais do estado no período
+
+x_t <- exportacao_ne %>%
+  group_by(estado, periodo) %>%
+  summarise(
+    X_t = sum(valor_fob, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+x_t
+
+
+
+# X_i,t = exportações do estado por seção no período
+
+x_it <- exportacao_ne %>%
+  group_by(estado, secao, nome_secao, periodo) %>%
+  summarise(
+    X_it = sum(valor_fob, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+x_it
+
+
+
+# X_j,t = exportações do estado por destino no período
+
+x_jt <- exportacao_ne %>%
+  group_by(estado, co_pais_ison_num, destino, periodo) %>%
+  summarise(
+    X_jt = sum(valor_fob, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+x_jt
+
+
+
+# X_ij,t = exportações do estado por seção e destino no período
+x_ijt <- exportacao_ne %>%
+  group_by(estado, secao, nome_secao, co_pais_ison_num, destino, periodo) %>%
+  summarise(
+    X_ijt = sum(valor_fob, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+x_ijt
+
+
+
+# 
+```
+
+
+# Calculo dos r
+```{r}
+
+# r = crescimento percentual das importações mundiais entre os períodos 1 e 2
+
+mundo_total <- demanda_mundial %>%
+  group_by(periodo) %>%
+  summarise(
+    valor_fob = sum(valor_fob, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+mundo_total_wide <- mundo_total %>%
+  pivot_wider(
+    names_from = periodo,
+    values_from = valor_fob
+  ) %>%
+  mutate(r = (P2 / P1) - 1)
+
+mundo_total
+mundo_total_wide  
+
+
+
+# r_i
+
+mundo_i <- demanda_mundial %>%
+  group_by(secao, nome_secao, periodo) %>%
+  summarise(
+    valor_fob = sum(valor_fob, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+mundo_i_wide <- mundo_i %>%
+  pivot_wider(
+    names_from = periodo,
+    values_from = valor_fob,
+    values_fill = 0
+  ) %>%
+  mutate(r_i = if_else(P1 > 0, (P2 / P1) - 1, NA_real_))
+
+mundo_i
+mundo_i_wide
+
+
+
+# r_i_j
+mundo_ij <- demanda_mundial %>%
+  group_by(secao, nome_secao, co_pais_ison_num, periodo) %>%
+  summarise(
+    valor_fob = sum(valor_fob, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+mundo_ij_wide <- mundo_ij %>%
+  pivot_wider(
+    names_from = periodo,
+    values_from = valor_fob,
+    values_fill = 0
+  ) %>%
+  mutate(r_ij = if_else(P1 > 0, (P2 / P1) - 1, NA_real_))
+
+mundo_ij
+mundo_ij_wide
+
+```
+
+
+
+
+#Resultados das fórmulas
+```{r}
+##Cresimento
+mundo_total_wide
+
+#Sobre r_i e r_i_j
+summary(mundo_i_wide$r_i)
+summary(mundo_ij_wide$r_ij)
+
+##Quantos NA em r_ij
+mundo_ij_wide[is.na(r_ij), .N]
+
+```
+
