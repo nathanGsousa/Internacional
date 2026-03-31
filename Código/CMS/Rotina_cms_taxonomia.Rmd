@@ -1,0 +1,100 @@
+---
+title: "Rotina Artigo com metodologia CMS e taxinomia "
+author: "Nathan Sousa"
+date: "2026-03-21"
+output: html_document
+---
+
+
+# Bibliotecas necessarias
+```{r}
+
+require(dplyr)
+require(tidyr)
+require(readr)
+require(stringr)
+
+```
+
+#Arquivo sh6 -> BEC
+```{r}
+
+sh_bec <- read_csv("C:/Users/Nathan/Home/Internacional/Dados/auxiliar/H6_to_BE.csv")
+
+names(sh_bec)
+
+```
+
+
+
+
+
+# Lendo os arquivos csvs com os dados do Nordeste e importação mundial
+```{r}
+
+
+exportacao_ne <- read_delim(
+  "C:/Users/Nathan/Home/Internacional/Dados/Exportações/export_ne_hs6_periodo.csv",
+  delim = ";",
+  locale = locale(encoding = "UTF-8"),
+  show_col_types = FALSE
+)
+
+demanda_mundial <- read_delim(
+  "C:/Users/Nathan/Home/Internacional/Dados/Importações/baci_cms_ref_hs6.csv",
+  delim = ";",
+  locale = locale(encoding = "Latin1"),
+  show_col_types = FALSE
+)
+
+##Checar estrutura
+glimpse(exportacao_ne)
+glimpse(demanda_mundial)
+head(demanda_mundial, 10)
+
+#Limpando
+exportacao_ne <- exportacao_ne %>%
+  mutate(
+    co_pais = as.character(co_pais),
+    co_pais_ison_num = as.integer(co_pais_ison_num),
+    periodo = str_trim(periodo),
+    valor_fob = as.numeric(valor_fob)
+  )
+
+demanda_mundial <- demanda_mundial %>%
+  mutate(
+    co_pais_ison_num = as.integer(co_pais_ison_num),
+    periodo = str_trim(periodo),
+    valor_fob = as.numeric(valor_fob)
+  )
+
+##Checar estrutura
+glimpse(exportacao_ne)
+glimpse(demanda_mundial)
+
+
+names(exportacao_ne)
+names(demanda_mundial)
+
+```
+
+```{r}
+
+
+exportacao_ne %>%
+  distinct(sh4) %>%
+  inner_join(sh4_ambiguos, by = "sh4") %>%
+  nrow()
+
+exportacao_ne %>%
+  mutate(sh4 = as.character(sh4)) %>%
+  left_join(sh4_ambiguos, by = "sh4") %>%
+  mutate(ambigua = ifelse(is.na(n_bec), "nao", "sim")) %>%
+  group_by(ambigua) %>%
+  summarise(
+    valor_total = sum(valor_fob, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(participacao = valor_total / sum(valor_total))
+```
+

@@ -1,0 +1,371 @@
+---
+title: "R para limpar dados de importação e exportação"
+output: html_notebook
+---
+
+
+#Bibliotecas necessarias
+```{r}
+setwd("C:/Users/Nathan/Home/Internacional/Dados/Importações")
+
+require(dplyr)
+require(tidyr)
+require(readr)
+require(data.table)
+require(stringr)
+require(readxl)
+
+require(stringr)
+require(stringi)
+```
+
+
+
+
+#Dados de demanda mundial (Importações por países) Gaulier, G. and Zignago, S. (2010) BACI: International Trade Database at the Product-Level. The 1994-2007 Version. CEPII Working Paper, N°2010-23
+
+
+#Transformar em função
+```{r}
+processa_baci_ano <- function(ano, pasta_base) {
+  
+  arquivo <- sprintf("%s/BACI_HS12_Y%d_V202601.csv", pasta_base, ano)
+  
+  dt <- fread(
+    arquivo,
+    select = c("j", "k", "v"),
+    colClasses = list(character = c("j", "k"), numeric = "v"),
+    showProgress = TRUE
+  )
+  
+  setDT(dt)
+  
+  # país importador do BACI = co_pais_ison_num
+  dt[, co_pais_ison_num := as.integer(j)]
+  
+  # manter em HS6
+  dt[, hs6 := sprintf("%06d", as.integer(k))]
+  
+  # ano e período
+  dt[, ano := ano]
+  dt[, periodo := fifelse(ano >= 2015 & ano <= 2019, "P1", "P2")]
+  
+  # valor: BACI está em thousand USD
+  dt[, valor_fob := v * 1000]
+  
+  # manter só o necessário
+  dt <- dt[, .(
+    hs6,
+    co_pais_ison_num,
+    ano,
+    periodo,
+    valor_fob
+  )]
+  
+  # agregação anual final
+  dt <- dt[, .(
+    valor_fob = sum(valor_fob, na.rm = TRUE)
+  ), by = .(
+    hs6,
+    co_pais_ison_num,
+    ano,
+    periodo
+  )]
+  
+  return(dt)
+}
+```
+
+
+```{r}
+
+anos <- 2015:2024
+pasta_baci <- "C:/Users/Nathan/Home/Internacional/Dados/Importações"
+
+lista_baci <- lapply(
+  anos,
+  function(a) processa_baci_ano(
+    ano = a,
+    pasta_base = pasta_baci
+  )
+)
+
+baci_todos_anos <- rbindlist(lista_baci, use.names = TRUE, fill = TRUE)
+
+# conferir
+dim(baci_todos_anos)
+head(baci_todos_anos)
+str(baci_todos_anos)
+
+setcolorder(
+  baci_todos_anos,
+  c("hs6", "co_pais_ison_num", "ano", "periodo", "valor_fob")
+)
+```
+
+# Para os periodos
+```{r}
+
+baci_cms_ref <- baci_todos_anos[, .(
+  valor_fob = sum(valor_fob, na.rm = TRUE)
+), by = .(
+  hs6,
+  co_pais_ison_num,
+  periodo
+)]
+
+# conferir
+dim(baci_cms_ref)
+head(baci_cms_ref)
+str(baci_cms_ref)
+
+fwrite(
+  baci_todos_anos,
+  "C:/Users/Nathan/Home/Internacional/Dados/Importações/baci_imp_anual_hs6.csv",
+  sep = ";"
+)
+
+fwrite(
+  baci_cms_ref,
+  "C:/Users/Nathan/Home/Internacional/Dados/Importações/baci_cms_ref_hs6.csv",
+  sep = ";"
+)
+```
+
+
+#Exportação do nordeste
+```{r}
+
+padroniza_texto <- function(x) {
+  x <- as.character(x)
+  x <- trimws(x)
+  x <- stri_trans_general(x, "Latin-ASCII")
+  x <- tolower(x)
+  x <- gsub("[[:punct:]]", " ", x)
+  x <- gsub("\\s+", " ", x)
+  x <- trimws(x)
+  x
+}
+
+paises <- fread(
+  "C:/Users/Nathan/Home/Internacional/Dados/auxiliar/PAIS.csv",
+  encoding = "Latin-1"
+)
+
+paises[, pais_chave := padroniza_texto(NO_PAIS_POR)]
+
+paises_ref <- unique(
+  paises[, .(
+    pais_chave,
+    co_pais_ison_num = as.integer(CO_PAIS_ISON3)
+  )]
+)
+
+str(paises)
+str(paises_ref)
+
+
+teste <- read_excel("C:/Users/Nathan/Home/Internacional/Dados/Exportações/ex_2015-19.xlsx")
+
+names(teste)
+
+dt <- as.data.table(teste)
+
+cols_anos <- grep("^20[0-9]{2} - Valor US\\$ FOB$", names(dt), value = TRUE)
+
+dt_long <- melt(
+  dt,
+  id.vars = c("UF do Produto", "Código SH6", "Descrição SH6", "Países"),
+  measure.vars = cols_anos,
+  variable.name = "ano_coluna",
+  value.name = "valor_fob"
+)
+
+dt_long[, ano := as.integer(str_extract(ano_coluna, "\\d{4}"))]
+
+head(dt_long, 10)
+str(dt_long)
+
+dt_long[, pais_chave := padroniza_texto(Países)]
+
+head(dt_long[, .(Países, pais_chave)], 10)
+
+dt_long2 <- merge(
+  dt_long,
+  paises_ref,
+  by = "pais_chave",
+  all.x = TRUE,
+  sort = FALSE
+)
+
+str(dt_long2)
+head(dt_long2[, .(Países, pais_chave, co_pais_ison_num)], 10)
+dt_long2[is.na(co_pais_ison_num), unique(Países)]
+
+dt_final <- dt_long2[, .(
+  uf_produto = `UF do Produto`,
+  hs6 = sprintf("%06s", `Código SH6`),
+  descricao_sh6 = `Descrição SH6`,
+  pais = Países,
+  co_pais_ison_num,
+  ano,
+  valor_fob
+)]
+
+str(dt_final)
+head(dt_final, 10)
+
+```
+
+
+
+```{r}
+
+arquivos <- c(
+  "C:/Users/Nathan/Home/Internacional/Dados/Exportações/ex_2015-19.xlsx",
+  "C:/Users/Nathan/Home/Internacional/Dados/Exportações/ex_2020-22.xlsx",
+  "C:/Users/Nathan/Home/Internacional/Dados/Exportações/ex_2023-24.xlsx"
+)
+
+
+padroniza_texto <- function(x) {
+  x <- as.character(x)
+  x <- trimws(x)
+  x <- stri_trans_general(x, "Latin-ASCII")
+  x <- tolower(x)
+  x <- gsub("[[:punct:]]", " ", x)
+  x <- gsub("\\s+", " ", x)
+  x <- trimws(x)
+  x
+}
+
+processa_exportacao_ne <- function(arquivo, paises_ref) {
+  
+  dt <- read_excel(arquivo)
+  dt <- as.data.table(dt)
+  
+  cols_anos <- grep("^20[0-9]{2} - Valor US\\$ FOB$", names(dt), value = TRUE)
+  
+  dt_long <- melt(
+    dt,
+    id.vars = c("UF do Produto", "Código SH6", "Descrição SH6", "Países"),
+    measure.vars = cols_anos,
+    variable.name = "ano_coluna",
+    value.name = "valor_fob"
+  )
+  
+  dt_long[, ano := as.integer(str_extract(as.character(ano_coluna), "\\d{4}"))]
+  dt_long[, pais_chave := padroniza_texto(Países)]
+  
+  dt_long <- merge(
+    dt_long,
+    paises_ref,
+    by = "pais_chave",
+    all.x = TRUE,
+    sort = FALSE
+  )
+  
+  dt_final <- dt_long[, .(
+    uf_produto = `UF do Produto`,
+    hs6 = sprintf("%06s", `Código SH6`),
+    descricao_sh6 = `Descrição SH6`,
+    pais = Países,
+    co_pais_ison_num,
+    ano,
+    valor_fob = as.numeric(valor_fob)
+  )]
+  
+  return(dt_final)
+}
+
+```
+
+
+```{r}
+
+arquivos <- c(
+  "C:/Users/Nathan/Home/Internacional/Dados/Exportações/ex_2015-19.xlsx",
+  "C:/Users/Nathan/Home/Internacional/Dados/Exportações/ex_2020-22.xlsx",
+  "C:/Users/Nathan/Home/Internacional/Dados/Exportações/ex_2023-24.xlsx"
+)
+
+lista_exp <- lapply(
+  arquivos,
+  function(arq) processa_exportacao_ne(arq, paises_ref)
+)
+
+export_ne_todos <- rbindlist(lista_exp, use.names = TRUE, fill = TRUE)
+
+str(export_ne_todos)
+head(export_ne_todos, 10)
+
+export_ne_todos[, periodo := fifelse(ano >= 2015 & ano <= 2019, "P1", "P2")]
+
+# Canárias, Ilhas e outros registros ligados à Espanha
+# aparecem com o mesmo ISO numérico 724.
+# Para compatibilizar com a análise por parceiro em ISO numérico,
+# padronizamos o nome textual para "Espanha".
+export_ne_todos[co_pais_ison_num == 724, pais := "Espanha"]
+
+
+export_ne_todos[, .N, by = periodo]
+range(export_ne_todos$ano, na.rm = TRUE)
+export_ne_todos[is.na(co_pais_ison_num), unique(pais)]
+
+
+```
+
+```{r}
+
+export_ne_final <- export_ne_todos[, .(
+  valor_fob = sum(valor_fob, na.rm = TRUE)
+), by = .(
+  uf_produto,
+  hs6,
+  descricao_sh6,
+  pais,
+  co_pais_ison_num,
+  ano,
+  periodo
+)]
+
+
+str(export_ne_final)
+head(export_ne_final, 10)
+
+export_ne_final[, .N, by = .(uf_produto, hs6, co_pais_ison_num, ano)][N > 1]
+```
+
+
+```{r}
+
+
+fwrite(
+  export_ne_final,
+  "C:/Users/Nathan/Home/Internacional/Dados/Exportações/export_ne_hs6_anual.csv",
+  sep = ";"
+)
+
+
+export_ne_cms <- export_ne_final[, .(
+  descricao_sh6 = first(descricao_sh6),
+  pais = first(pais),
+  valor_fob = sum(valor_fob, na.rm = TRUE)
+), by = .(
+  uf_produto,
+  hs6,
+  co_pais_ison_num,
+  periodo
+)]
+
+
+fwrite(
+  export_ne_cms,
+  "C:/Users/Nathan/Home/Internacional/Dados/Exportações/export_ne_hs6_periodo.csv",
+  sep = ";"
+)
+
+```
+
+
+#Fim!

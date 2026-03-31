@@ -1,5 +1,5 @@
 ---
-title: "Rotina com Metodologia CMS para Painel"
+title: "Rotina com Metodologia CMS para Painel com seções"
 output: html_notebook
 ---
 
