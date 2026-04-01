@@ -1,0 +1,276 @@
+---
+title: "R para limpar dados de importação de SH6 para seção"
+output: html_notebook
+---
+
+
+#Bibliotecas necessarias
+```{r}
+setwd("C:/Users/Nathan/Home/Internacional/Dados/Importações")
+
+require(dplyr)
+require(tidyr)
+require(readr)
+require(data.table)
+require(stringr)
+
+
+```
+
+
+
+
+# Tabela para transformar os dados em Seções do Sistema Harmonizado
+```{r}
+
+sh4_tab <- fread("C:/Users/Nathan/Home/Internacional/Dados/auxiliar/NCM_SH.csv", encoding = "Latin-1")
+
+setDT(sh4_tab)
+# ---------- tabela SH4 -> seção ----------
+sh4_tab <- unique(
+  sh4_tab[, .(
+    sh4 = sprintf("%04d", as.integer(CO_SH4)),
+    secao = as.character(CO_NCM_SECROM),
+    nome_secao = NO_SEC_POR
+  )]
+)
+
+# conferir
+head(sh4_tab)
+str(sh4_tab)
+
+```
+
+
+#Dados de demanda mundial (Importações por países) Gaulier, G. and Zignago, S. (2010) BACI: International Trade Database at the Product-Level. The 1994-2007 Version. CEPII Working Paper, N°2010-23
+
+```{r}
+
+baci_2024 <- fread(
+  "C:/Users/Nathan/Home/Internacional/Dados/BACI_HS12_Y2024_V202601.csv",
+  select = c("j", "k", "v"),
+  colClasses = list(character = c("j", "k"), numeric = "v"),
+  showProgress = TRUE
+)
+
+setDT(baci_2024)
+
+# país importador do BACI = co_pais_ison_num
+baci_2024[, co_pais_ison_num := as.integer(j)]
+
+# SH6 -> SH4
+baci_2024[, hs6 := sprintf("%06d", as.integer(k))]
+baci_2024[, sh4 := substr(hs6, 1, 4)]
+
+# período
+baci_2024[, periodo := "P2"]
+
+# valor: BACI está em thousand USD
+baci_2024[, valor_fob := v * 1000]
+
+# manter só o necessário
+baci_2024 <- baci_2024[, .(
+  co_pais_ison_num,
+  sh4,
+  periodo,
+  valor_fob
+)]
+
+# conferir
+head(baci_2024)
+str(baci_2024)
+
+uniqueN(baci_2024$co_pais_ison_num)
+uniqueN(baci_2024$sh4)
+summary(baci_2024$valor_fob)
+head(baci_2024)
+```
+
+
+
+#Fazendo os dados ficarem em  seções do SH
+```{r}
+
+# 1) agregar cedo para reduzir volume
+baci_2024_ag <- baci_2024[, .(
+  valor_fob = sum(valor_fob, na.rm = TRUE)
+), by = .(co_pais_ison_num, sh4, periodo)]
+
+# 2) join com SH4 -> seção
+baci_2024_final <- merge(
+  baci_2024_ag,
+  sh4_tab,
+  by = "sh4",
+  all.x = TRUE
+)
+
+# diagnóstico: SH4 sem correspondência
+baci_2024_final[is.na(secao), .N]
+baci_2024_final[is.na(secao)][1:20]
+
+# 3) manter apenas o necessário
+baci_2024_final <- baci_2024_final[, .(
+  secao,
+  nome_secao,
+  co_pais_ison_num,
+  periodo,
+  valor_fob
+)]
+
+# 4) agregação final no formato útil para o CMS
+baci_2024_final <- baci_2024_final[, .(
+  valor_fob = sum(valor_fob, na.rm = TRUE)
+), by = .(
+  secao,
+  nome_secao,
+  co_pais_ison_num,
+  periodo
+)]
+
+# conferir
+dim(baci_2024_final)
+head(baci_2024_final)
+str(baci_2024_final)
+
+```
+
+
+#Transformar a ideia em função
+```{r}
+
+processa_baci_ano <- function(ano, pasta_base, sh4_tab) {
+  
+  arquivo <- sprintf("%s/BACI_HS12_Y%d_V202601.csv", pasta_base, ano)
+  
+  dt <- fread(
+    arquivo,
+    select = c("j", "k", "v"),
+    colClasses = list(character = c("j", "k"), numeric = "v"),
+    showProgress = TRUE
+  )
+  
+  setDT(dt)
+  
+  # país importador do BACI = co_pais_ison_num
+  dt[, co_pais_ison_num := as.integer(j)]
+  
+  # SH6 -> SH4
+  dt[, hs6 := sprintf("%06d", as.integer(k))]
+  dt[, sh4 := substr(hs6, 1, 4)]
+  
+  # período
+  dt[, periodo := ifelse(ano >= 2015 & ano <= 2019, "P1", "P2")]
+  
+  # valor: BACI está em thousand USD
+  dt[, valor_fob := v * 1000]
+  
+  # manter só o necessário
+  dt <- dt[, .(
+    co_pais_ison_num,
+    sh4,
+    periodo,
+    valor_fob
+  )]
+  
+  # agregar cedo
+  dt <- dt[, .(
+    valor_fob = sum(valor_fob, na.rm = TRUE)
+  ), by = .(co_pais_ison_num, sh4, periodo)]
+  
+  # join com SH4 -> seção
+  dt <- merge(
+    dt,
+    sh4_tab,
+    by = "sh4",
+    all.x = TRUE
+  )
+  
+  # diagnóstico simples
+  sem_secao <- dt[is.na(secao), .N]
+  cat("\nAno:", ano, "- linhas sem seção:", sem_secao, "\n")
+  
+  # manter apenas o necessário
+  dt <- dt[, .(
+    secao,
+    nome_secao,
+    co_pais_ison_num,
+    periodo,
+    valor_fob
+  )]
+  
+  # agregação final no formato útil para o CMS
+  dt <- dt[, .(
+    valor_fob = sum(valor_fob, na.rm = TRUE)
+  ), by = .(
+    secao,
+    nome_secao,
+    co_pais_ison_num,
+    periodo
+  )]
+  
+  # guardar ano para conferência
+  dt[, ano := ano]
+  
+  return(dt)
+}
+```
+
+
+```{r}
+
+anos <- 2015:2024
+pasta_baci <- "C:/Users/Nathan/Home/Internacional/Dados/Importações"
+
+lista_baci <- lapply(
+  anos,
+  function(a) processa_baci_ano(
+    ano = a,
+    pasta_base = pasta_baci,
+    sh4_tab = sh4_tab
+  )
+)
+
+baci_todos_anos <- rbindlist(lista_baci, use.names = TRUE, fill = TRUE)
+
+dim(baci_todos_anos)
+head(baci_todos_anos)
+str(baci_todos_anos)
+
+```
+
+```{r}
+
+# consolidar os 10 anos em apenas 2 períodos
+baci_cms_ref <- baci_todos_anos[, .(
+  valor_fob = sum(valor_fob, na.rm = TRUE)
+), by = .(
+  secao,
+  nome_secao,
+  co_pais_ison_num,
+  periodo
+)]
+
+## conferir
+dim(baci_cms_ref)
+head(baci_cms_ref)
+str(baci_cms_ref)
+
+## Salvando 
+
+fwrite(
+  baci_cms_ref,
+  "C:/Users/Nathan/Home/Internacional/Dados/Importações/baci_cms_ref.csv",
+  sep = ";"
+)
+
+fwrite(
+  baci_todos_anos,
+  "C:/Users/Nathan/Home/Internacional/Dados/Importações/baci_imp_anual.csv",
+  sep = ";"
+)
+
+```
+
+
+
+#Fim!
